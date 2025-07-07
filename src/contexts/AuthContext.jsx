@@ -1,7 +1,7 @@
 // src/contexts/AuthContext.jsx
 import React, { useContext, useState, useEffect } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
-import { doc, onSnapshot } from 'firebase/firestore';
+import { doc, onSnapshot, collection, query, where } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 
 const AuthContext = React.createContext();
@@ -16,21 +16,36 @@ export function AuthProvider({ children }) {
 
     useEffect(() => {
         let profileListener = () => {};
+        let notificationListener = () => {}; // <-- Listener para notificaciones
 
         const authListener = onAuthStateChanged(auth, (firebaseUser) => {
-            profileListener(); // Limpia el listener de perfil anterior
+            profileListener();
+            notificationListener(); // Limpiamos los listeners anteriores al cambiar de usuario
 
             if (firebaseUser) {
+                // Listener para el perfil del usuario (como antes)
                 const userDocRef = doc(db, "users", firebaseUser.uid);
-                // Escuchamos en tiempo real los cambios del perfil
                 profileListener = onSnapshot(userDocRef, (userDoc) => {
+                    const profileData = userDoc.data();
                     const profileComplete = userDoc.exists();
-                    setUser({ 
-                        uid: firebaseUser.uid, 
-                        email: firebaseUser.email, 
-                        profileComplete, 
-                        ...userDoc.data() 
+                    
+                    // Listener anidado para las notificaciones no leídas
+                    const notifRef = collection(db, "users", firebaseUser.uid, "notifications");
+                    const q = query(notifRef, where("read", "==", false));
+                    notificationListener = onSnapshot(q, (notifSnapshot) => {
+                        // Actualizamos el objeto de usuario con la info del perfil Y las notificaciones
+                        setUser({ 
+                            uid: firebaseUser.uid, 
+                            email: firebaseUser.email, 
+                            profileComplete, 
+                            ...profileData,
+                            unreadNotifications: notifSnapshot.size // Añadimos el contador de no leídas
+                        });
+                        setLoading(false);
                     });
+                }, (error) => {
+                    console.error("Error escuchando el perfil:", error);
+                    setUser(null);
                     setLoading(false);
                 });
             } else {
@@ -39,10 +54,11 @@ export function AuthProvider({ children }) {
             }
         });
 
-        // Limpiamos los listeners cuando el componente se desmonte
+        // Limpieza final cuando el AuthProvider se desmonta
         return () => {
             authListener();
             profileListener();
+            notificationListener();
         };
     }, []);
 

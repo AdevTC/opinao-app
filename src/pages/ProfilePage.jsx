@@ -1,236 +1,261 @@
-// src/pages/ProfilePage.jsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import {
-  doc,
-  getDocs,
-  collection,
-  query,
-  where,
-  orderBy,
-  onSnapshot,
-  documentId,
-  limit,
-  startAfter
-} from 'firebase/firestore';
+import { doc, getDocs, collection, query, where, onSnapshot, orderBy, documentId } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { formatDate } from '../utils/helpers';
-import { Edit, MapPin, Briefcase, FileText, Vote, Settings } from 'lucide-react';
+import { toggleFollow } from '../utils/userActions';
+import { checkAndAwardBadges, BADGE_DEFINITIONS } from '../utils/badges';
+import { Edit, Settings, UserPlus, UserCheck, Briefcase, GraduationCap, FileText, Vote, Loader, BarChart3, Trophy } from 'lucide-react';
 import { toast } from 'react-hot-toast';
+import { usePaginatedQuery } from '../hooks/usePaginatedQuery';
+import { useInfiniteScroll } from '../hooks/useInfiniteScroll';
+import { PollCard } from '../components/PollCard';
+import { PollCardSkeleton } from '../components/PollCardSkeleton';
+
+const ProfileCardSkeleton = () => (
+    <div className="bg-light-container dark:bg-dark-container rounded-xl shadow-2xl overflow-hidden mb-8 animate-pulse">
+        <div className="h-48 bg-gray-200 dark:bg-gray-800"></div>
+        <div className="p-6">
+            <div className="flex justify-between items-start -mt-24">
+                <div className="w-32 h-32 rounded-full bg-gray-300 dark:bg-gray-700 border-4 border-light-container dark:border-dark-container"></div>
+                <div className="h-10 w-32 bg-gray-300 dark:bg-gray-700 rounded-lg mt-6"></div>
+            </div>
+            <div className="pt-4 space-y-3">
+                <div className="h-8 w-1/2 bg-gray-300 dark:bg-gray-700 rounded"></div>
+                <div className="h-4 w-1/3 bg-gray-300 dark:bg-gray-700 rounded"></div>
+                <div className="h-12 w-full bg-gray-300 dark:bg-gray-700 rounded mt-4"></div>
+            </div>
+            <div className="flex items-center gap-6 mt-6 border-t border-gray-200 dark:border-gray-700 pt-4">
+                <div className="h-10 w-16 bg-gray-300 dark:bg-gray-700 rounded"></div>
+                <div className="h-10 w-16 bg-gray-300 dark:bg-gray-700 rounded"></div>
+                <div className="h-10 w-16 bg-gray-300 dark:bg-gray-700 rounded"></div>
+            </div>
+        </div>
+    </div>
+);
 
 export default function ProfilePage() {
-  const { authorUid } = useParams();
-  const [activeTab, setActiveTab] = useState('created');
-  const [createdPolls, setCreatedPolls] = useState([]);
-  const [votedPolls, setVotedPolls] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [profile, setProfile] = useState(null);
-  const { user: currentUser } = useAuth();
+    const { authorUid } = useParams();
+    const { user: currentUser } = useAuth();
+    const [profile, setProfile] = useState(null);
+    const [loadingProfile, setLoadingProfile] = useState(true);
+    const [isFollowingLoading, setIsFollowingLoading] = useState(false);
+    const [activeTab, setActiveTab] = useState('created');
+    const [badgesChecked, setBadgesChecked] = useState(false);
 
-  const [lastVotedVisible, setLastVotedVisible] = useState(null);
-  const [hasMoreVoted, setHasMoreVoted] = useState(true);
-  const [loadingMoreVoted, setLoadingMoreVoted] = useState(false);
+    const createdPollsQuery = useMemo(() => 
+        query(collection(db, 'polls'), where('authorUid', '==', authorUid), orderBy('createdAt', 'desc'))
+    , [authorUid]);
 
-  const isOwnProfile = currentUser && currentUser.uid === authorUid;
-  const POLLS_PER_PAGE = 5;
+    const { data: createdPolls, loading: loadingCreated, loadMore: loadMoreCreated, hasMore: hasMoreCreated } = usePaginatedQuery(createdPollsQuery, 6);
+    const createdLoadMoreRef = useInfiniteScroll(loadMoreCreated, hasMoreCreated, loadingCreated);
 
-  useEffect(() => {
-    setLoading(true);
-    const userDocRef = doc(db, 'users', authorUid);
+    const [votedPolls, setVotedPolls] = useState([]);
+    const [loadingVoted, setLoadingVoted] = useState(true);
+    const [votedPollsIds, setVotedPollsIds] = useState([]);
+    const [lastVotedIndex, setLastVotedIndex] = useState(0);
+    const [hasMoreVoted, setHasMoreVoted] = useState(true);
+    const POLLS_PER_PAGE = 6;
 
-    const profileUnsubscribe = onSnapshot(userDocRef, (userDoc) => {
-      if (userDoc.exists()) {
-        setProfile(userDoc.data());
-      } else {
-        setProfile(null);
-      }
-    });
+    const fetchVotedPolls = async (startIndex = 0) => {
+        if (!isOwnProfile || votedPollsIds.length === 0) {
+            setLoadingVoted(false);
+            setHasMoreVoted(false);
+            return;
+        }
 
-    const createdPollsRef = collection(db, 'polls');
-    const qCreated = query(createdPollsRef, where('authorUid', '==', authorUid), orderBy('createdAt', 'desc'));
-    const createdUnsubscribe = onSnapshot(qCreated, (querySnapshot) => {
-      setCreatedPolls(querySnapshot.docs.map((d) => ({ ...d.data(), id: d.id })));
-      setLoading(false);
-    });
+        setLoadingVoted(true);
+        const nextIds = votedPollsIds.slice(startIndex, startIndex + POLLS_PER_PAGE);
 
-    return () => {
-      profileUnsubscribe();
-      createdUnsubscribe();
+        if (nextIds.length === 0) {
+            setHasMoreVoted(false);
+            setLoadingVoted(false);
+            return;
+        }
+
+        try {
+            const pollsRef = collection(db, 'polls');
+            const q = query(pollsRef, where(documentId(), 'in', nextIds));
+            const snapshot = await getDocs(q);
+            
+            const fetchedPollsMap = snapshot.docs.reduce((acc, doc) => {
+                acc[doc.id] = { ...doc.data(), id: doc.id };
+                return acc;
+            }, {});
+            
+            const orderedPolls = nextIds.map(id => fetchedPollsMap[id]).filter(Boolean);
+            
+            setVotedPolls(prev => startIndex === 0 ? orderedPolls : [...prev, ...orderedPolls]);
+            setLastVotedIndex(startIndex + nextIds.length);
+            setHasMoreVoted(votedPollsIds.length > startIndex + nextIds.length);
+        } catch (err) {
+            toast.error('Error al cargar encuestas votadas.');
+        } finally {
+            setLoadingVoted(false);
+        }
     };
-  }, [authorUid]);
 
-  useEffect(() => {
-    const fetchInitialVotedPolls = async () => {
-      if (isOwnProfile && profile && profile.votedPolls && profile.votedPolls.length > 0) {
-        const pollsRef = collection(db, 'polls');
-        const votedIds = profile.votedPolls.slice(0, POLLS_PER_PAGE);
-        const q = query(pollsRef, where(documentId(), 'in', votedIds));
-        const snapshot = await getDocs(q);
-        const initialPolls = snapshot.docs.map((d) => ({ ...d.data(), id: d.id }));
-        setVotedPolls(initialPolls);
-        setLastVotedVisible(votedIds[votedIds.length - 1]);
-        setHasMoreVoted(profile.votedPolls.length > POLLS_PER_PAGE);
-      }
-    };
-    fetchInitialVotedPolls();
-  }, [profile, isOwnProfile]);
+    const isOwnProfile = currentUser && currentUser.uid === authorUid;
+    const isFollowing = profile?.followers?.includes(currentUser?.uid);
 
-  const fetchMoreVotedPolls = async () => {
-    if (!hasMoreVoted || loadingMoreVoted || !profile?.votedPolls?.length) return;
-    setLoadingMoreVoted(true);
-    try {
-      const currentIndex = profile.votedPolls.indexOf(lastVotedVisible) + 1;
-      const nextIds = profile.votedPolls.slice(currentIndex, currentIndex + POLLS_PER_PAGE);
-      if (nextIds.length === 0) {
-        setHasMoreVoted(false);
-        return;
-      }
-      const pollsRef = collection(db, 'polls');
-      const q = query(pollsRef, where(documentId(), 'in', nextIds));
-      const snapshot = await getDocs(q);
-      const newPolls = snapshot.docs.map((d) => ({ ...d.data(), id: d.id }));
-      setVotedPolls((prev) => [...prev, ...newPolls]);
-      setLastVotedVisible(nextIds[nextIds.length - 1]);
-      setHasMoreVoted(profile.votedPolls.length > currentIndex + POLLS_PER_PAGE);
-    } catch (err) {
-      toast.error('Error al cargar más encuestas votadas.');
-    } finally {
-      setLoadingMoreVoted(false);
-    }
-  };
-
-  const TabButton = ({ tabName, activeTab, setActiveTab, icon, children }) => (
-    <button
-      onClick={() => setActiveTab(tabName)}
-      className={`flex items-center gap-2 py-2 px-4 rounded-t-lg font-bold transition-colors ${
-        activeTab === tabName
-          ? 'bg-light-container dark:bg-dark-container text-primary'
-          : 'bg-transparent text-gray-500 hover:text-primary'
-      }`}
-    >
-      {icon} {children}
-    </button>
-  );
-
-  if (loading) return <p className="text-center mt-8">Cargando perfil...</p>;
-  if (!profile) return <p className="text-center mt-8">Este usuario no existe.</p>;
-
-  return (
-    <div className="max-w-4xl mx-auto">
-      <div className="bg-light-container dark:bg-dark-container p-8 rounded-xl shadow-2xl mb-8">
-        <div className="flex flex-col sm:flex-row items-center gap-6">
-          <img
-            src={
-              profile.avatarUrl ||
-              `https://ui-avatars.com/api/?name=${profile.username}&background=7c3aed&color=fff&size=128`
+    useEffect(() => {
+        const profileUnsubscribe = onSnapshot(doc(db, 'users', authorUid), (userDoc) => {
+            if (userDoc.exists()) {
+                const userData = { ...userDoc.data(), uid: userDoc.id };
+                setProfile(userData);
+                
+                if (currentUser?.uid === authorUid) {
+                    setVotedPollsIds(currentIds => JSON.stringify(currentIds) !== JSON.stringify(userData.votedPolls || []) ? (userData.votedPolls || []) : currentIds);
+                    if (!loadingCreated && !badgesChecked) {
+                        checkAndAwardBadges(userData, createdPolls.length);
+                        setBadgesChecked(true);
+                    }
+                }
+            } else {
+                setProfile(null);
             }
-            alt="Avatar"
-            className="w-24 h-24 rounded-full object-cover flex-shrink-0"
-          />
-          <div className="flex-grow text-center sm:text-left w-full">
-            <div className="flex items-center gap-4 justify-center sm:justify-start">
-              <h1 className="text-3xl font-display font-bold">{profile.username}</h1>
-              {isOwnProfile && (
-                <>
-                  <Link to="/edit-profile" className="p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700" title="Editar Perfil">
-                    <Edit size={20} />
-                  </Link>
-                  <Link to="/settings" className="p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700" title="Ajustes de Cuenta">
-                    <Settings size={20} />
-                  </Link>
-                </>
-              )}
-            </div>
-            <p className="text-gray-500 dark:text-gray-400">Miembro desde {formatDate(profile.createdAt)}</p>
-            <div className="mt-4 flex flex-wrap gap-x-4 gap-y-2 justify-center sm:justify-start text-sm">
-              {profile.country && (
-                <span className="flex items-center gap-1">
-                  <MapPin size={14} /> {profile.country}
-                </span>
-              )}
-              {profile.profession && (
-                <span className="flex items-center gap-1">
-                  <Briefcase size={14} /> {profile.profession}
-                </span>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
+            setLoadingProfile(false);
+        });
 
-      <div className="border-b border-gray-200 dark:border-gray-700">
-        <nav className="-mb-px flex space-x-4">
-          <TabButton tabName="created" activeTab={activeTab} setActiveTab={setActiveTab} icon={<FileText size={16} />}>
-            Creadas
-          </TabButton>
-          {isOwnProfile && (
-            <TabButton tabName="voted" activeTab={activeTab} setActiveTab={setActiveTab} icon={<Vote size={16} />}>
-              Votadas
-            </TabButton>
-          )}
-        </nav>
-      </div>
+        return () => profileUnsubscribe();
+    }, [authorUid, currentUser, createdPolls.length, loadingCreated, badgesChecked]);
+    
+    useEffect(() => {
+        if (activeTab === 'voted' && isOwnProfile && votedPolls.length === 0) {
+            fetchVotedPolls(0);
+        }
+    }, [activeTab, isOwnProfile, votedPollsIds]);
 
-      <div className="py-6">
-        {activeTab === 'created' && (
-          <div className="space-y-4">
-            {createdPolls.length > 0 ? (
-              createdPolls.map((poll) => (
-                <Link
-                  key={poll.id}
-                  to={`/poll/${poll.id}`}
-                  className="block bg-light-container dark:bg-dark-container p-4 rounded-lg hover:shadow-lg transition-shadow"
-                >
-                  <p className="font-bold">{poll.question}</p>
-                  <p className="text-sm text-gray-500">
-                    {poll.totalVotes || 0} votos • Creada {formatDate(poll.createdAt)}
-                  </p>
-                </Link>
-              ))
-            ) : (
-              <p className="text-center text-gray-500 p-8 rounded-xl bg-light-container dark:bg-dark-container">
-                Este usuario todavía no ha creado ninguna encuesta.
-              </p>
-            )}
-          </div>
-        )}
-        {activeTab === 'voted' && (
-          <div className="space-y-4">
-            {votedPolls.length > 0 ? (
-              <>
-                {votedPolls.map((poll) => (
-                  <Link
-                    key={poll.id}
-                    to={`/poll/${poll.id}`}
-                    className="block bg-light-container dark:bg-dark-container p-4 rounded-lg hover:shadow-lg transition-shadow"
-                  >
-                    <p className="font-bold">{poll.question}</p>
-                    <p className="text-sm text-gray-500">
-                      {poll.totalVotes || 0} votos • Creada por {poll.authorUsername}
-                    </p>
-                  </Link>
-                ))}
-                {hasMoreVoted && (
-                  <div className="text-center mt-6">
-                    <button
-                      onClick={fetchMoreVotedPolls}
-                      className="bg-primary text-white px-4 py-2 rounded-lg hover:bg-primary-dark transition-colors"
-                      disabled={loadingMoreVoted}
-                    >
-                      {loadingMoreVoted ? 'Cargando...' : 'Cargar más'}
-                    </button>
-                  </div>
+    const votedLoadMoreRef = useInfiniteScroll(() => fetchVotedPolls(lastVotedIndex), hasMoreVoted, loadingVoted);
+
+    const handleToggleFollow = async () => {
+        if (!currentUser) return toast.error("Necesitas iniciar sesión para seguir a otros usuarios.");
+        setIsFollowingLoading(true);
+        await toggleFollow(currentUser.uid, profile.uid, isFollowing);
+        setIsFollowingLoading(false);
+    };
+
+    if (loadingProfile) return <ProfileCardSkeleton />;
+    if (!profile) return <p className="text-center mt-8">Este usuario no existe.</p>;
+
+    return (
+        <div className="max-w-4xl mx-auto">
+            <div className="bg-light-container dark:bg-dark-container rounded-xl shadow-2xl overflow-hidden mb-8">
+                <div className={`h-48 ${profile.headerUrl ? '' : 'bg-gray-200 dark:bg-gray-800'}`}>
+                    {profile.headerUrl && <img src={profile.headerUrl} alt="Cabecera del perfil" className="w-full h-full object-cover" />}
+                </div>
+                <div className="p-6">
+                    <div className="flex justify-between items-end -mt-20">
+                        <img src={profile.avatarUrl || `https://ui-avatars.com/api/?name=${profile.username}&background=7c3aed&color=fff&size=128`} alt="Avatar" className="w-32 h-32 rounded-full object-cover border-4 border-light-container dark:border-dark-container" />
+                        <div className="pb-4">
+                            {isOwnProfile ? (
+                                <div className="flex gap-2">
+                                    <Link to="/edit-profile" className="bg-gray-200 dark:bg-gray-700 font-bold py-2 px-4 rounded-lg flex items-center justify-center gap-2 text-sm hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"><Edit size={16} /> Editar Perfil</Link>
+                                    <Link to="/settings" className="p-2 rounded-lg bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors" title="Ajustes de Cuenta"><Settings size={20} /></Link>
+                                </div>
+                            ) : currentUser && (
+                                <button onClick={handleToggleFollow} disabled={isFollowingLoading} className={`font-bold py-2 px-6 rounded-lg transition-colors disabled:opacity-50 flex items-center justify-center gap-2 ${ isFollowing ? 'bg-primary/20 text-primary border-2 border-primary' : 'bg-primary text-white' }`}>
+                                    {isFollowingLoading ? '...' : (isFollowing ? <><UserCheck size={16}/> Siguiendo</> : <><UserPlus size={16}/> Seguir</>)}
+                                </button>
+                            )}
+                        </div>
+                    </div>
+                    <div className="pt-4">
+                        <h1 className="text-3xl font-display font-bold">{profile.username}</h1>
+                        <p className="text-gray-500 dark:text-gray-400 text-sm">Miembro desde {formatDate(profile.createdAt)}</p>
+                        {profile.bio && <p className="mt-4 text-base text-gray-700 dark:text-gray-300">{profile.bio}</p>}
+                        <div className="mt-4 flex flex-wrap gap-x-6 gap-y-2 text-sm text-gray-500 dark:text-gray-400">
+                            {profile.profession && (<span className="flex items-center gap-1.5"><Briefcase size={14} /> {profile.profession}</span>)}
+                            {profile.education && (<span className="flex items-center gap-1.5"><GraduationCap size={14} /> {profile.education}</span>)}
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-6 mt-6 border-t border-gray-200 dark:border-gray-700 pt-4">
+                        <div className="text-center"><p className="font-bold text-lg">{createdPolls.length}</p><p className="text-sm text-gray-500">Encuestas</p></div>
+                        <div className="text-center"><p className="font-bold text-lg">{profile.followerCount || 0}</p><p className="text-sm text-gray-500">Seguidores</p></div>
+                        <div className="text-center"><p className="font-bold text-lg">{profile.followingCount || 0}</p><p className="text-sm text-gray-500">Siguiendo</p></div>
+                    </div>
+                </div>
+            </div>
+
+            <div className="bg-light-container dark:bg-dark-container rounded-xl shadow-xl p-6 mb-8">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6">
+                    <div>
+                        <h3 className="text-xl font-bold font-display flex items-center gap-2 mb-4"><BarChart3 size={20} /> Estadísticas</h3>
+                        <div className="space-y-3">
+                            <div className="flex justify-between p-3 bg-light-bg dark:bg-dark-bg rounded-lg">
+                                <span className="font-semibold">Encuestas Creadas</span>
+                                <span className="font-bold text-primary">{createdPolls.length}</span>
+                            </div>
+                            <div className="flex justify-between p-3 bg-light-bg dark:bg-dark-bg rounded-lg">
+                                <span className="font-semibold">Encuestas Votadas</span>
+                                <span className="font-bold text-primary">{profile.votedPolls?.length || 0}</span>
+                            </div>
+                            <div className="flex justify-between p-3 bg-light-bg dark:bg-dark-bg rounded-lg">
+                                <span className="font-semibold">Quizzes Acertados</span>
+                                <span className="font-bold text-primary">{profile.quizAnswersCorrect || 0}</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div>
+                        <h3 className="text-xl font-bold font-display flex items-center gap-2 mb-4"><Trophy size={20} /> Logros</h3>
+                        {profile.badges && profile.badges.length > 0 ? (
+                            <div className="flex flex-wrap gap-3">
+                                {profile.badges.map(badgeId => {
+                                    const badge = BADGE_DEFINITIONS[badgeId];
+                                    if (!badge) return null;
+                                    return (
+                                        <div key={badgeId} title={badge.description} className="flex items-center gap-2 bg-light-bg dark:bg-dark-bg p-2 rounded-full cursor-help">
+                                            <span className="text-xl">{badge.icon}</span>
+                                            <span className="font-semibold text-sm pr-2">{badge.name}</span>
+                                        </div>
+                                    )
+                                })}
+                            </div>
+                        ) : (
+                            <p className="text-sm text-gray-500 italic mt-4">¡Sigue participando para desbloquear logros!</p>
+                        )}
+                    </div>
+                </div>
+            </div>
+
+            <div className="border-b border-gray-200 dark:border-gray-700">
+                <nav className="-mb-px flex space-x-4">
+                    <button onClick={() => setActiveTab('created')} className={`flex items-center gap-2 py-2 px-4 rounded-t-lg font-bold transition-colors ${activeTab === 'created' ? 'bg-light-container dark:bg-dark-container text-primary' : 'bg-transparent text-gray-500 hover:text-primary'}`}><FileText size={16} /> Creadas</button>
+                    {isOwnProfile && <button onClick={() => setActiveTab('voted')} className={`flex items-center gap-2 py-2 px-4 rounded-t-lg font-bold transition-colors ${activeTab === 'voted' ? 'bg-light-container dark:bg-dark-container text-primary' : 'bg-transparent text-gray-500 hover:text-primary'}`}><Vote size={16} /> Votadas</button>}
+                </nav>
+            </div>
+            
+            <div className="py-6">
+                {activeTab === 'created' && (
+                    <>
+                        {loadingCreated && createdPolls.length === 0 ? (
+                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"><PollCardSkeleton /><PollCardSkeleton /><PollCardSkeleton /></div>
+                        ) : createdPolls.length > 0 ? (
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                                {createdPolls.map(poll => <PollCard key={poll.id} poll={poll} />)}
+                            </div>
+                        ) : (
+                            <p className="text-center text-gray-500 py-12">Este usuario no ha creado ninguna encuesta.</p>
+                        )}
+                        <div ref={createdLoadMoreRef} className="h-10 flex justify-center items-center">{hasMoreCreated && <Loader className="animate-spin text-primary" />}</div>
+                    </>
                 )}
-              </>
-            ) : (
-              <p className="text-center text-gray-500 p-8 rounded-xl bg-light-container dark:bg-dark-container">
-                Aún no has votado en ninguna encuesta.
-              </p>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
-  );
+                {activeTab === 'voted' && isOwnProfile && (
+                    <>
+                        {loadingVoted && votedPolls.length === 0 ? (
+                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"><PollCardSkeleton /><PollCardSkeleton /><PollCardSkeleton /></div>
+                        ) : votedPolls.length > 0 ? (
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                                {votedPolls.map(poll => poll && <PollCard key={poll.id} poll={poll} />)}
+                            </div>
+                        ) : (
+                            <p className="text-center text-gray-500 py-12">Aún no has votado en ninguna encuesta.</p>
+                        )}
+                         <div ref={votedLoadMoreRef} className="h-10 flex justify-center items-center">{hasMoreVoted && loadingVoted && <Loader className="animate-spin text-primary" />}</div>
+                    </>
+                )}
+            </div>
+        </div>
+    );
 }

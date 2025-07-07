@@ -9,7 +9,6 @@ import { useAuth } from './contexts/AuthContext';
 import Navbar from './components/Navbar';
 import ProtectedRoute from './components/ProtectedRoute';
 
-// Importación de todas las páginas
 import HomePage from './pages/HomePage';
 import LoginPage from './pages/LoginPage';
 import SignupPage from './pages/SignupPage';
@@ -20,9 +19,13 @@ import ProfilePage from './pages/ProfilePage';
 import EditProfilePage from './pages/EditProfilePage';
 import ResultsPage from './pages/ResultsPage';
 import AccountSettingsPage from './pages/AccountSettingsPage';
+import FeedPage from './pages/FeedPage';
+import NotificationsPage from './pages/NotificationsPage';
+import TagPage from './pages/TagPage';
+import SearchPage from './pages/SearchPage';
+import TagsPage from './pages/TagsPage';
+import EditPollPage from './pages/EditPollPage';
 
-// Este es el componente principal de la aplicación.
-// El AuthProvider lo envuelve desde main.jsx
 export default function App() {
   const [isDarkMode, setIsDarkMode] = useState(false);
   const { user, loading } = useAuth();
@@ -57,19 +60,23 @@ export default function App() {
   return (
     <div className="bg-light-bg dark:bg-dark-bg min-h-screen font-sans text-gray-800 dark:text-gray-200 selection:bg-primary/30">
       <Toaster position="top-center" reverseOrder={false} />
-      {/* Navbar ahora obtiene 'user' del contexto, solo le pasamos las funciones */}
-      <Navbar toggleTheme={toggleTheme} isDarkMode={isDarkMode} handleLogout={handleLogout} />
+      <Navbar toggleTheme={toggleTheme} isDarkMode={isDarkMode} />
       <main className="container mx-auto p-4 md:p-8">
         <Routes>
           <Route path="/" element={user && !user.profileComplete ? <Navigate to="/complete-profile" /> : <HomePage />} />
           <Route path="/poll/:id" element={<PollPage />} />
           <Route path="/profile/:authorUid" element={<ProfilePage />} />
+          <Route path="/tag/:tagName" element={<TagPage />} />
+          <Route path="/tags" element={<TagsPage />} />
+          <Route path="/search" element={<SearchPage />} />
           <Route path="/login" element={!user ? <LoginPage /> : <Navigate to="/" />} />
           <Route path="/signup" element={!user ? <SignupPage /> : <Navigate to="/" />} />
           <Route path="/complete-profile" element={user && !user.profileComplete ? <CompleteProfilePage handleLogout={handleLogout} /> : <Navigate to="/" />} />
           
-          {/* ProtectedRoute ahora obtiene 'user' del contexto */}
+          <Route path="/feed" element={<ProtectedRoute profileRequired={true}><FeedPage /></ProtectedRoute>} />
+          <Route path="/notifications" element={<ProtectedRoute profileRequired={true}><NotificationsPage /></ProtectedRoute>} />
           <Route path="/create" element={<ProtectedRoute profileRequired={true}><CreatePollPage /></ProtectedRoute>} />
+          <Route path="/poll/:id/edit" element={<ProtectedRoute profileRequired={true}><EditPollPage /></ProtectedRoute>} />
           <Route path="/poll/:id/results" element={<ProtectedRoute profileRequired={true}><ResultsPage /></ProtectedRoute>} />
           <Route path="/edit-profile" element={<ProtectedRoute profileRequired={true}><EditProfilePage /></ProtectedRoute>} />
           <Route path="/settings" element={<ProtectedRoute profileRequired={true}><AccountSettingsPage /></ProtectedRoute>} />

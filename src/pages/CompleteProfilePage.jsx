@@ -58,7 +58,17 @@ export default function CompleteProfilePage({ handleLogout }) {
                 education,
                 country,
                 createdAt: new Date(),
-                votedPolls: []
+                votedPolls: [],
+                followers: [],
+                following: [],
+                followerCount: 0,
+                followingCount: 0,
+                bio: '',
+                headerUrl: '',
+                avatarUrl: '',
+                // --- CAMPOS NUEVOS PARA ESTADÍSTICAS Y LOGROS ---
+                quizAnswersCorrect: 0,
+                badges: [],
             });
             batch.set(usernameDocRef, { uid: user.uid, email: user.email });
             await batch.commit();
