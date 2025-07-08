@@ -1,10 +1,10 @@
-// src/pages/AccountSettingsPage.jsx
+// src/pages/AccountSettingsPage.jsx (Actualizado)
+
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { auth, db } from '../firebase';
+import { auth } from '../firebase';
 import { EmailAuthProvider, reauthenticateWithCredential, updatePassword, deleteUser } from 'firebase/auth';
-import { doc, deleteDoc, writeBatch, collection, query, where, getDocs } from 'firebase/firestore';
 import { toast } from 'react-hot-toast';
 import { Eye, EyeOff } from 'lucide-react';
 
@@ -14,9 +14,9 @@ const ValidationError = ({ message }) => {
 };
 
 export default function AccountSettingsPage() {
-    const { user, handleLogout } = useAuth();
+    const { user } = useAuth();
     const navigate = useNavigate();
-    
+
     // Estados para cambio de contraseña
     const [currentPassword, setCurrentPassword] = useState('');
     const [newPassword, setNewPassword] = useState('');
@@ -79,25 +79,19 @@ export default function AccountSettingsPage() {
         }
         setIsDeleting(true);
         try {
-            const batch = writeBatch(db);
-            
-            // Eliminar documento de usuario y de username
-            const userRef = doc(db, 'users', user.uid);
-            const usernameRef = doc(db, 'usernames', user.username);
-            batch.delete(userRef);
-            batch.delete(usernameRef);
-
-            // TODO: En un futuro, se podrían eliminar también las encuestas y comentarios del usuario.
-            // Esto requeriría una Cloud Function para hacerlo de forma eficiente y segura.
-
-            await batch.commit();
+            // Ahora solo necesitamos eliminar el usuario del sistema de Auth.
+            // La Cloud Function 'cleanupUser' se encargará del resto automáticamente.
             await deleteUser(auth.currentUser);
 
             toast.success("Cuenta eliminada permanentemente. ¡Te echaremos de menos!");
             navigate('/');
         } catch (error) {
             console.error("Error al eliminar la cuenta:", error);
-            toast.error("No se pudo eliminar la cuenta. Por favor, contacta con soporte.");
+            if (error.code === 'auth/requires-recent-login') {
+                toast.error("Esta operación es sensible y requiere que inicies sesión de nuevo. Por favor, hazlo y vuelve a intentarlo.");
+            } else {
+                toast.error("No se pudo eliminar la cuenta. Por favor, contacta con soporte.");
+            }
             setIsDeleting(false);
         }
     };
@@ -109,7 +103,7 @@ export default function AccountSettingsPage() {
                 <p className="text-center text-gray-500">Gestiona tu contraseña y los datos de tu cuenta.</p>
             </div>
 
-            {/* Sección para Cambiar Contraseña */}
+            {/* Sección para Cambiar Contraseña (sin cambios) */}
             <div className="bg-light-container dark:bg-dark-container p-8 rounded-xl shadow-2xl">
                 <h2 className="text-2xl font-display font-bold mb-6">Cambiar Contraseña</h2>
                 <form onSubmit={handleChangePassword} className="space-y-4">
@@ -134,10 +128,10 @@ export default function AccountSettingsPage() {
                 </form>
             </div>
 
-            {/* Sección para Eliminar Cuenta */}
+            {/* Sección para Eliminar Cuenta (actualizada) */}
             <div className="bg-red-500/10 border border-red-500/30 p-8 rounded-xl">
                  <h2 className="text-2xl font-display font-bold mb-4 text-red-500">Zona de Peligro</h2>
-                 <p className="mb-4">Eliminar tu cuenta es una acción irreversible. Se borrarán todos tus datos de perfil y no podrás recuperarlos.</p>
+                 <p className="mb-4">Eliminar tu cuenta es una acción irreversible. Se borrarán todos tus datos de perfil, encuestas y contenido asociado de forma permanente.</p>
                  <div>
                     <label htmlFor="deleteConfirmation" className="block font-bold mb-2">Para confirmar, escribe tu nombre de usuario: <span className="text-primary">{user.username}</span></label>
                     <input type="text" id="deleteConfirmation" value={deleteConfirmation} onChange={e => setDeleteConfirmation(e.target.value)} className="w-full p-3 mt-1 rounded-lg bg-light-bg dark:bg-dark-bg" />

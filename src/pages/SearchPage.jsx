@@ -1,4 +1,5 @@
-// src/pages/SearchPage.jsx
+// src/pages/SearchPage.jsx (Actualizado)
+
 import React, { useState, useEffect } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { collection, query, where, getDocs, limit } from 'firebase/firestore';
@@ -6,6 +7,7 @@ import { db } from '../firebase';
 import { PollCard } from '../components/PollCard';
 import { Loader, Search } from 'lucide-react';
 import { toast } from 'react-hot-toast';
+import { EmptyState } from '../components/EmptyState';
 
 const UserResultCard = ({ user }) => (
     <Link to={`/profile/${user.id}`} className="flex items-center gap-4 p-4 bg-light-bg dark:bg-dark-bg rounded-lg hover:bg-primary/10 transition-colors">
@@ -40,42 +42,27 @@ export default function SearchPage() {
             
             try {
                 const cleanedSearchTerm = rawSearchTerm.trim().toLowerCase();
-                const searchTags = cleanedSearchTerm.split(',').map(tag => tag.trim()).filter(Boolean);
-
-                let userPromise = Promise.resolve({ docs: [] }); // Devolvemos un objeto similar a snapshot
-                if (!cleanedSearchTerm.includes(',')) {
-                    const usersRef = collection(db, 'users');
-                    const userQuery = query(usersRef, where('username', '==', cleanedSearchTerm), limit(5));
-                    userPromise = getDocs(userQuery);
-                }
-
+                const isTagSearch = cleanedSearchTerm.startsWith('#');
+                const finalSearchTerm = isTagSearch ? cleanedSearchTerm.substring(1) : cleanedSearchTerm;
+                
+                let userPromise = Promise.resolve({ docs: [] });
                 let pollPromise = Promise.resolve([]);
-                if (searchTags.length > 0) {
+
+                if (isTagSearch) {
                     const pollsRef = collection(db, 'polls');
-                    
-                    // --- INICIO DE LA CORRECCIÓN ---
-                    // Quitamos el orderBy('createdAt') para evitar la necesidad del índice compuesto.
-                    const initialPollQuery = query(
-                        pollsRef, 
-                        where('tags', 'array-contains', searchTags[0]),
-                        limit(50) // Aumentamos un poco el límite por si filtramos mucho después
+                    const pollQuery = query(pollsRef, where('tags', 'array-contains', finalSearchTerm), limit(20));
+                    pollPromise = getDocs(pollQuery).then(snapshot => 
+                        snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }))
                     );
-                    // --- FIN DE LA CORRECCIÓN ---
-
-                    pollPromise = getDocs(initialPollQuery).then(snapshot => {
-                        const allPollsForFirstTag = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
-                        
-                        let filteredPolls = allPollsForFirstTag;
-                        if (searchTags.length > 1) {
-                            const otherTags = searchTags.slice(1);
-                            filteredPolls = allPollsForFirstTag.filter(poll => 
-                                otherTags.every(tag => poll.tags?.includes(tag))
-                            );
-                        }
-
-                        // Ordenamos los resultados aquí, en el cliente, en lugar de en la base de datos.
-                        return filteredPolls.sort((a, b) => b.createdAt.toMillis() - a.createdAt.toMillis());
-                    });
+                } else {
+                    const usersRef = collection(db, 'users');
+                    const userQuery = query(
+                        usersRef, 
+                        where('username', '>=', finalSearchTerm),
+                        where('username', '<=', finalSearchTerm + '\uf8ff'),
+                        limit(10)
+                    );
+                    userPromise = getDocs(userQuery);
                 }
                 
                 const [userSnapshot, foundPolls] = await Promise.all([
@@ -89,8 +76,13 @@ export default function SearchPage() {
                 setPolls(foundPolls);
 
             } catch (error) {
-                console.error("Error al buscar:", error);
-                toast.error("No se pudieron obtener los resultados de la búsqueda.");
+                if (error.code === 'failed-precondition') {
+                     toast.error("La búsqueda requiere un índice. Por favor, créalo desde el enlace en la consola (F12).");
+                     console.error("Error de índice en la búsqueda:", error);
+                } else {
+                    console.error("Error al buscar:", error);
+                    toast.error("No se pudieron obtener los resultados de la búsqueda.");
+                }
             } finally {
                 setLoading(false);
             }
@@ -116,12 +108,11 @@ export default function SearchPage() {
             </h1>
 
             {users.length === 0 && polls.length === 0 ? (
-                 <div className="text-center text-gray-500 p-8 rounded-xl bg-light-container dark:bg-dark-container">
-                    <Search size={48} className="mx-auto mb-4 text-primary" />
-                    <h2 className="text-xl font-bold mb-2">Sin resultados</h2>
-                    <p>No hemos encontrado usuarios o encuestas que coincidan con tu búsqueda.</p>
-                    <p>Prueba a buscar por un nombre de usuario exacto o por una o más etiquetas separadas por comas.</p>
-                </div>
+                 <EmptyState
+                    icon={<Search />}
+                    title="Sin resultados"
+                    message="No hemos encontrado nada que coincida con tu búsqueda. Prueba a buscar por un nombre de usuario o por una etiqueta precedida de #"
+                />
             ) : (
                 <div className="space-y-12">
                     {users.length > 0 && (

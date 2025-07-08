@@ -1,4 +1,5 @@
-// src/App.jsx
+// src/App.jsx (Actualizado)
+
 import React, { useState, useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster, toast } from 'react-hot-toast';
@@ -27,16 +28,28 @@ import TagsPage from './pages/TagsPage';
 import EditPollPage from './pages/EditPollPage';
 
 export default function App() {
-  const [isDarkMode, setIsDarkMode] = useState(false);
+  // --- INICIO DE LA CORRECCIÓN ---
+  // 1. Inicializamos el estado leyendo del localStorage.
+  // Si no hay nada guardado, usamos `false` (modo claro) por defecto.
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    const savedMode = localStorage.getItem('isDarkMode');
+    return savedMode ? JSON.parse(savedMode) : false;
+  });
+  // --- FIN DE LA CORRECCIÓN ---
+
   const { user, loading } = useAuth();
 
+  // --- INICIO DE LA CORRECCIÓN ---
+  // 2. Usamos useEffect para guardar el estado en localStorage CADA VEZ que cambie.
   useEffect(() => {
+    localStorage.setItem('isDarkMode', JSON.stringify(isDarkMode));
     if (isDarkMode) {
       document.documentElement.classList.add('dark');
     } else {
       document.documentElement.classList.remove('dark');
     }
   }, [isDarkMode]);
+  // --- FIN DE LA CORRECCIÓN ---
 
   const toggleTheme = () => setIsDarkMode(prevMode => !prevMode);
 
@@ -48,7 +61,7 @@ export default function App() {
       if (!silent) toast.error('Error al cerrar sesión.');
     }
   };
-  
+
   if (loading) {
     return (
       <div className="w-full h-screen flex items-center justify-center bg-light-bg dark:bg-dark-bg">
@@ -72,7 +85,7 @@ export default function App() {
           <Route path="/login" element={!user ? <LoginPage /> : <Navigate to="/" />} />
           <Route path="/signup" element={!user ? <SignupPage /> : <Navigate to="/" />} />
           <Route path="/complete-profile" element={user && !user.profileComplete ? <CompleteProfilePage handleLogout={handleLogout} /> : <Navigate to="/" />} />
-          
+
           <Route path="/feed" element={<ProtectedRoute profileRequired={true}><FeedPage /></ProtectedRoute>} />
           <Route path="/notifications" element={<ProtectedRoute profileRequired={true}><NotificationsPage /></ProtectedRoute>} />
           <Route path="/create" element={<ProtectedRoute profileRequired={true}><CreatePollPage /></ProtectedRoute>} />
@@ -80,7 +93,7 @@ export default function App() {
           <Route path="/poll/:id/results" element={<ProtectedRoute profileRequired={true}><ResultsPage /></ProtectedRoute>} />
           <Route path="/edit-profile" element={<ProtectedRoute profileRequired={true}><EditProfilePage /></ProtectedRoute>} />
           <Route path="/settings" element={<ProtectedRoute profileRequired={true}><AccountSettingsPage /></ProtectedRoute>} />
-          
+
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
       </main>

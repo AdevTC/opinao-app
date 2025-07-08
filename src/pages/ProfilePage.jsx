@@ -6,7 +6,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { formatDate } from '../utils/helpers';
 import { toggleFollow } from '../utils/userActions';
 import { checkAndAwardBadges, BADGE_DEFINITIONS } from '../utils/badges';
-import { Edit, Settings, UserPlus, UserCheck, Briefcase, GraduationCap, FileText, Vote, Loader, BarChart3, Trophy } from 'lucide-react';
+import { Edit, Settings, UserPlus, UserCheck, Briefcase, GraduationCap, FileText, Vote, Loader, BarChart3, Trophy, Bookmark } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery';
 import { useInfiniteScroll } from '../hooks/useInfiniteScroll';
@@ -44,11 +44,13 @@ export default function ProfilePage() {
     const [activeTab, setActiveTab] = useState('created');
     const [badgesChecked, setBadgesChecked] = useState(false);
 
+    const POLLS_PER_PAGE = 6;
+    const isOwnProfile = currentUser && currentUser.uid === authorUid;
+
     const createdPollsQuery = useMemo(() => 
         query(collection(db, 'polls'), where('authorUid', '==', authorUid), orderBy('createdAt', 'desc'))
     , [authorUid]);
-
-    const { data: createdPolls, loading: loadingCreated, loadMore: loadMoreCreated, hasMore: hasMoreCreated } = usePaginatedQuery(createdPollsQuery, 6);
+    const { data: createdPolls, loading: loadingCreated, loadMore: loadMoreCreated, hasMore: hasMoreCreated } = usePaginatedQuery(createdPollsQuery, POLLS_PER_PAGE);
     const createdLoadMoreRef = useInfiniteScroll(loadMoreCreated, hasMoreCreated, loadingCreated);
 
     const [votedPolls, setVotedPolls] = useState([]);
@@ -56,8 +58,38 @@ export default function ProfilePage() {
     const [votedPollsIds, setVotedPollsIds] = useState([]);
     const [lastVotedIndex, setLastVotedIndex] = useState(0);
     const [hasMoreVoted, setHasMoreVoted] = useState(true);
-    const POLLS_PER_PAGE = 6;
 
+    const [savedPolls, setSavedPolls] = useState([]);
+    const [loadingSaved, setLoadingSaved] = useState(true);
+    const [savedPollsIds, setSavedPollsIds] = useState([]);
+    const [lastSavedIndex, setLastSavedIndex] = useState(0);
+    const [hasMoreSaved, setHasMoreSaved] = useState(true);
+
+    const isFollowing = profile?.followers?.includes(currentUser?.uid);
+
+    useEffect(() => {
+        const profileUnsubscribe = onSnapshot(doc(db, 'users', authorUid), (userDoc) => {
+            if (userDoc.exists()) {
+                const userData = { ...userDoc.data(), uid: userDoc.id };
+                setProfile(userData);
+                
+                if (currentUser?.uid === authorUid) {
+                    setVotedPollsIds(ids => JSON.stringify(ids) !== JSON.stringify(userData.votedPolls || []) ? (userData.votedPolls || []) : ids);
+                    setSavedPollsIds(ids => JSON.stringify(ids) !== JSON.stringify(userData.savedPolls || []) ? (userData.savedPolls || []) : ids);
+                    
+                    if (!loadingCreated && !badgesChecked) {
+                        checkAndAwardBadges(userData, createdPolls.length);
+                        setBadgesChecked(true);
+                    }
+                }
+            } else {
+                setProfile(null);
+            }
+            setLoadingProfile(false);
+        });
+        return () => profileUnsubscribe();
+    }, [authorUid, currentUser, createdPolls.length, loadingCreated, badgesChecked]);
+    
     const fetchVotedPolls = async (startIndex = 0) => {
         if (!isOwnProfile || votedPollsIds.length === 0) {
             setLoadingVoted(false);
@@ -96,38 +128,56 @@ export default function ProfilePage() {
         }
     };
 
-    const isOwnProfile = currentUser && currentUser.uid === authorUid;
-    const isFollowing = profile?.followers?.includes(currentUser?.uid);
-
-    useEffect(() => {
-        const profileUnsubscribe = onSnapshot(doc(db, 'users', authorUid), (userDoc) => {
-            if (userDoc.exists()) {
-                const userData = { ...userDoc.data(), uid: userDoc.id };
-                setProfile(userData);
-                
-                if (currentUser?.uid === authorUid) {
-                    setVotedPollsIds(currentIds => JSON.stringify(currentIds) !== JSON.stringify(userData.votedPolls || []) ? (userData.votedPolls || []) : currentIds);
-                    if (!loadingCreated && !badgesChecked) {
-                        checkAndAwardBadges(userData, createdPolls.length);
-                        setBadgesChecked(true);
-                    }
-                }
-            } else {
-                setProfile(null);
-            }
-            setLoadingProfile(false);
-        });
-
-        return () => profileUnsubscribe();
-    }, [authorUid, currentUser, createdPolls.length, loadingCreated, badgesChecked]);
-    
-    useEffect(() => {
-        if (activeTab === 'voted' && isOwnProfile && votedPolls.length === 0) {
-            fetchVotedPolls(0);
+    const fetchSavedPolls = async (startIndex = 0) => {
+        if (!isOwnProfile || savedPollsIds.length === 0) {
+            setLoadingSaved(false);
+            setHasMoreSaved(false);
+            return;
         }
-    }, [activeTab, isOwnProfile, votedPollsIds]);
+
+        setLoadingSaved(true);
+        const nextIds = savedPollsIds.slice(startIndex, startIndex + POLLS_PER_PAGE);
+
+        if (nextIds.length === 0) {
+            setHasMoreSaved(false);
+            setLoadingSaved(false);
+            return;
+        }
+
+        try {
+            const pollsRef = collection(db, 'polls');
+            const q = query(pollsRef, where(documentId(), 'in', nextIds));
+            const snapshot = await getDocs(q);
+            
+            const fetchedPollsMap = snapshot.docs.reduce((acc, doc) => {
+                acc[doc.id] = { ...doc.data(), id: doc.id };
+                return acc;
+            }, {});
+            
+            const orderedPolls = nextIds.map(id => fetchedPollsMap[id]).filter(Boolean);
+            
+            setSavedPolls(prev => startIndex === 0 ? orderedPolls : [...prev, ...orderedPolls]);
+            setLastSavedIndex(startIndex + nextIds.length);
+            setHasMoreSaved(savedPollsIds.length > startIndex + nextIds.length);
+        } catch (err) {
+            toast.error('Error al cargar encuestas guardadas.');
+        } finally {
+            setLoadingSaved(false);
+        }
+    };
+
+    useEffect(() => {
+        if (isOwnProfile) {
+            if (activeTab === 'voted' && votedPolls.length === 0) {
+                fetchVotedPolls(0);
+            } else if (activeTab === 'saved' && savedPolls.length === 0) {
+                fetchSavedPolls(0);
+            }
+        }
+    }, [activeTab, isOwnProfile, votedPollsIds, savedPollsIds]);
 
     const votedLoadMoreRef = useInfiniteScroll(() => fetchVotedPolls(lastVotedIndex), hasMoreVoted, loadingVoted);
+    const savedLoadMoreRef = useInfiniteScroll(() => fetchSavedPolls(lastSavedIndex), hasMoreSaved, loadingSaved);
 
     const handleToggleFollow = async () => {
         if (!currentUser) return toast.error("Necesitas iniciar sesión para seguir a otros usuarios.");
@@ -223,6 +273,7 @@ export default function ProfilePage() {
                 <nav className="-mb-px flex space-x-4">
                     <button onClick={() => setActiveTab('created')} className={`flex items-center gap-2 py-2 px-4 rounded-t-lg font-bold transition-colors ${activeTab === 'created' ? 'bg-light-container dark:bg-dark-container text-primary' : 'bg-transparent text-gray-500 hover:text-primary'}`}><FileText size={16} /> Creadas</button>
                     {isOwnProfile && <button onClick={() => setActiveTab('voted')} className={`flex items-center gap-2 py-2 px-4 rounded-t-lg font-bold transition-colors ${activeTab === 'voted' ? 'bg-light-container dark:bg-dark-container text-primary' : 'bg-transparent text-gray-500 hover:text-primary'}`}><Vote size={16} /> Votadas</button>}
+                    {isOwnProfile && <button onClick={() => setActiveTab('saved')} className={`flex items-center gap-2 py-2 px-4 rounded-t-lg font-bold transition-colors ${activeTab === 'saved' ? 'bg-light-container dark:bg-dark-container text-primary' : 'bg-transparent text-gray-500 hover:text-primary'}`}><Bookmark size={16} /> Guardadas</button>}
                 </nav>
             </div>
             
@@ -253,6 +304,20 @@ export default function ProfilePage() {
                             <p className="text-center text-gray-500 py-12">Aún no has votado en ninguna encuesta.</p>
                         )}
                          <div ref={votedLoadMoreRef} className="h-10 flex justify-center items-center">{hasMoreVoted && loadingVoted && <Loader className="animate-spin text-primary" />}</div>
+                    </>
+                )}
+                {activeTab === 'saved' && isOwnProfile && (
+                    <>
+                        {loadingSaved && savedPolls.length === 0 ? (
+                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"><PollCardSkeleton /><PollCardSkeleton /><PollCardSkeleton /></div>
+                        ) : savedPolls.length > 0 ? (
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                                {savedPolls.map(poll => poll && <PollCard key={poll.id} poll={poll} />)}
+                            </div>
+                        ) : (
+                            <p className="text-center text-gray-500 py-12">Aún no has guardado ninguna encuesta.</p>
+                        )}
+                         <div ref={savedLoadMoreRef} className="h-10 flex justify-center items-center">{hasMoreSaved && loadingSaved && <Loader className="animate-spin text-primary" />}</div>
                     </>
                 )}
             </div>

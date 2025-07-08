@@ -1,13 +1,13 @@
-// src/pages/NotificationsPage.jsx
+// src/pages/NotificationsPage.jsx (Actualizado)
+
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-// --- INICIO DE LA CORRECCIÓN ---
-import { collection, query, orderBy, getDocs, writeBatch, doc } from 'firebase/firestore'; // <-- Añadimos 'doc' aquí
-// --- FIN DE LA CORRECCIÓN ---
+import { collection, query, orderBy, getDocs, writeBatch, doc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { formatDate } from '../utils/helpers';
 import { Bell, UserPlus, MessageSquare, Vote } from 'lucide-react';
+import { EmptyState } from '../components/EmptyState';
 
 const NotificationIcon = ({ type }) => {
     switch (type) {
@@ -62,7 +62,6 @@ export default function NotificationsPage() {
                 const notifs = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 setNotifications(notifs);
 
-                // Marcar todas como leídas
                 const unreadDocs = notifs.filter(n => !n.read);
                 if (unreadDocs.length > 0) {
                     const batch = writeBatch(db);
@@ -96,7 +95,11 @@ export default function NotificationsPage() {
                         ))}
                     </div>
                 ) : (
-                    <p className="text-center text-gray-500 py-12">No tienes notificaciones.</p>
+                    <EmptyState
+                        icon={<Bell />}
+                        title="Todo en calma"
+                        message="No tienes notificaciones nuevas. ¡Interactúa con la comunidad para recibir noticias!"
+                    />
                 )}
             </div>
         </div>

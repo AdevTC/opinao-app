@@ -1,6 +1,7 @@
-// src/hooks/usePaginatedQuery.jsx
+// src/hooks/usePaginatedQuery.jsx (Corregido y optimizado)
+
 import { useState, useEffect, useCallback } from 'react';
-import { onSnapshot, getDocs, query, limit, startAfter } from 'firebase/firestore';
+import { getDocs, query, limit, startAfter } from 'firebase/firestore';
 import { toast } from 'react-hot-toast';
 
 export function usePaginatedQuery(baseQuery, pageSize = 6) {
@@ -10,9 +11,8 @@ export function usePaginatedQuery(baseQuery, pageSize = 6) {
     const [hasMore, setHasMore] = useState(true);
     const [lastVisible, setLastVisible] = useState(null);
 
+    // Este useEffect se encarga de la carga INICIAL y de RESETEAR cuando la consulta cambia.
     useEffect(() => {
-        // Si no hay una consulta base (ej: el usuario no sigue a nadie),
-        // dejamos de cargar y devolvemos un estado vacío.
         if (!baseQuery) {
             setData([]);
             setLoading(false);
@@ -21,38 +21,38 @@ export function usePaginatedQuery(baseQuery, pageSize = 6) {
         }
 
         setLoading(true);
-        
-        const initialQuery = query(baseQuery, limit(pageSize));
+        const q = query(baseQuery, limit(pageSize));
 
-        const unsubscribe = onSnapshot(initialQuery, (snapshot) => {
-            const newData = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
-            setData(newData);
-            
-            if (snapshot.docs.length > 0) {
-                setLastVisible(snapshot.docs[snapshot.docs.length - 1]);
-            } else {
-                setLastVisible(null);
-            }
-            
-            setHasMore(newData.length === pageSize);
-            setLoading(false);
-        }, (error) => {
-            console.error("Error en la consulta a Firestore: ", error);
-            toast.error("No se pudieron cargar los datos.");
-            setLoading(false);
-        });
+        getDocs(q)
+            .then(querySnapshot => {
+                const newDocs = querySnapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
 
-        return () => unsubscribe();
-    }, [baseQuery, pageSize]);
+                setData(newDocs);
+
+                if (querySnapshot.docs.length > 0) {
+                    setLastVisible(querySnapshot.docs[querySnapshot.docs.length - 1]);
+                } else {
+                    setLastVisible(null);
+                }
+
+                setHasMore(newDocs.length === pageSize);
+            })
+            .catch(error => {
+                console.error("Error en la consulta inicial paginada:", error);
+                toast.error("No se pudieron cargar los datos.");
+            })
+            .finally(() => {
+                setLoading(false);
+            });
+
+    }, [baseQuery, pageSize]); // Se re-ejecuta cada vez que la 'baseQuery' cambia.
 
     const loadMore = useCallback(async () => {
-        // Añadimos una comprobación extra para no ejecutar si no hay consulta
-        if (!hasMore || loadingMore || !lastVisible || !baseQuery) return;
+        if (loadingMore || !hasMore || !lastVisible || !baseQuery) return;
 
         setLoadingMore(true);
         try {
             const nextQuery = query(baseQuery, startAfter(lastVisible), limit(pageSize));
-
             const querySnapshot = await getDocs(nextQuery);
             const newDocs = querySnapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
 
@@ -64,12 +64,12 @@ export function usePaginatedQuery(baseQuery, pageSize = 6) {
                 setHasMore(false);
             }
         } catch (error) {
-            console.error("Error al cargar más datos: ", error);
+            console.error("Error al cargar más datos:", error);
             toast.error("No se pudieron cargar más datos.");
         } finally {
             setLoadingMore(false);
         }
-    }, [hasMore, loadingMore, lastVisible, baseQuery, pageSize]);
+    }, [loadingMore, hasMore, lastVisible, baseQuery, pageSize]);
 
     return { data, loading, loadingMore, hasMore, loadMore };
 }

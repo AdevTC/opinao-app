@@ -10,9 +10,12 @@ export const toggleFollow = async (currentUserUid, profileUserUid, isFollowing) 
     const currentUserRef = doc(db, 'users', currentUserUid);
     const profileUserRef = doc(db, 'users', profileUserUid);
 
+    // Referencias a los documentos de seguimiento para la Cloud Function
+    const followerDocRef = doc(db, `users/${profileUserUid}/followers/${currentUserUid}`);
+
     try {
         if (isFollowing) {
-            // Dejar de seguir (normalmente no se notifica)
+            // Dejar de seguir
             batch.update(currentUserRef, {
                 following: arrayRemove(profileUserUid),
                 followingCount: increment(-1)
@@ -21,8 +24,10 @@ export const toggleFollow = async (currentUserUid, profileUserUid, isFollowing) 
                 followers: arrayRemove(currentUserUid),
                 followerCount: increment(-1)
             });
+            // Al dejar de seguir, borramos el documento que activa la función
+            batch.delete(followerDocRef);
         } else {
-            // --- Seguir ---
+            // Empezar a seguir
             batch.update(currentUserRef, {
                 following: arrayUnion(profileUserUid),
                 followingCount: increment(1)
@@ -31,17 +36,8 @@ export const toggleFollow = async (currentUserUid, profileUserUid, isFollowing) 
                 followers: arrayUnion(currentUserUid),
                 followerCount: increment(1)
             });
-
-            // ========================================================================
-            // PUNTO DE NOTIFICACIÓN #1: Nuevo seguidor
-            // 
-            // Aquí es donde llamarías a una Cloud Function para crear la notificación.
-            // La función recibiría (currentUserUid, profileUserUid) y crearía un 
-            // documento en la subcolección /users/{profileUserUid}/notifications.
-            // 
-            // Ejemplo de llamada a una futura función:
-            // await createFollowNotification(currentUserUid, profileUserUid);
-            // ========================================================================
+            // Al seguir, creamos el documento que activará la Cloud Function
+            batch.set(followerDocRef, { createdAt: new Date() });
         }
 
         await batch.commit();

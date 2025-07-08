@@ -1,4 +1,5 @@
-// src/pages/CreatePollPage.jsx
+// src/pages/CreatePollPage.jsx (Corregido)
+
 import React, { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { collection, doc, writeBatch, serverTimestamp, increment } from 'firebase/firestore';
@@ -6,9 +7,8 @@ import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db, storage } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'react-hot-toast';
-import { Plus, X, Image as ImageIcon, Check, Settings2, Hash, FileQuestion, ListOrdered, UploadCloud } from 'lucide-react';
+import { Plus, X, Image as ImageIcon, Check, Settings2, Hash, FileQuestion, ListOrdered, UploadCloud, Clock } from 'lucide-react';
 
-// Pequeño componente para las secciones del formulario
 const FormSection = ({ icon, title, children }) => (
     <div className="space-y-4 border-t border-gray-200 dark:border-gray-700 pt-6">
         <div className="flex items-center gap-3">
@@ -36,6 +36,7 @@ export default function CreatePollPage() {
     const [correctAnswers, setCorrectAnswers] = useState([]);
     const [loading, setLoading] = useState(false);
     const imageInputRef = useRef(null);
+    const [deadline, setDeadline] = useState('');
 
     const handleOptionChange = (index, value) => {
         const newOptions = [...options];
@@ -69,6 +70,7 @@ export default function CreatePollPage() {
                 return;
             }
             setImage(file);
+            // --- ESTA ES LA LÍNEA CORREGIDA ---
             setImagePreview(URL.createObjectURL(file));
         }
     };
@@ -114,7 +116,7 @@ export default function CreatePollPage() {
             const batch = writeBatch(db);
             const newPollRef = doc(collection(db, 'polls'));
             
-            batch.set(newPollRef, {
+            const pollData = {
                 question,
                 options,
                 tags: tagsArray,
@@ -127,7 +129,10 @@ export default function CreatePollPage() {
                 isQuiz,
                 hideResults,
                 correctAnswers: isQuiz ? correctAnswers : [],
-            });
+                deadline: deadline ? new Date(deadline) : null,
+            };
+
+            batch.set(newPollRef, pollData);
 
             tagsArray.forEach(tag => {
                 const tagRef = doc(db, 'tags', tag);
@@ -157,12 +162,10 @@ export default function CreatePollPage() {
             </div>
             
             <form onSubmit={handleSubmit} className="bg-light-container dark:bg-dark-container p-8 rounded-xl shadow-2xl space-y-8">
-                {/* SECCIÓN 1: PREGUNTA */}
                 <FormSection icon={<FileQuestion size={24} />} title="La Pregunta Principal">
                     <textarea id="question" value={question} onChange={(e) => setQuestion(e.target.value)} placeholder="Ej: ¿Cuál es tu lenguaje de programación favorito?" className="w-full text-lg p-4 rounded-lg bg-light-bg dark:bg-dark-bg border-2 border-transparent focus:border-primary focus:outline-none min-h-[100px] resize-y" />
                 </FormSection>
 
-                {/* SECCIÓN 2: OPCIONES */}
                 <FormSection icon={<ListOrdered size={24} />} title="Opciones de Respuesta">
                     <div className="space-y-3">
                         {options.map((option, index) => (
@@ -181,34 +184,33 @@ export default function CreatePollPage() {
                     <button type="button" onClick={addOption} className="mt-4 flex items-center gap-2 text-sm font-bold text-primary hover:underline"><Plus size={16} />Añadir opción</button>
                 </FormSection>
 
-                {/* SECCIÓN 3: OPCIONES ADICIONALES */}
                 <FormSection icon={<Settings2 size={24} />} title="Ajustes Adicionales">
                     <div className="space-y-6">
-                        {/* Tags */}
                         <div>
                             <label htmlFor="tags" className="block text-md font-semibold mb-2 flex items-center gap-2"><Hash size={18}/>Etiquetas</label>
                             <input type="text" id="tags" value={tags} onChange={(e) => setTags(e.target.value)} placeholder="Ej: tecnologia, cine, videojuegos..." className="w-full p-3 rounded-lg bg-light-bg dark:bg-dark-bg border-2 border-transparent focus:border-primary focus:outline-none" />
                             <p className="text-xs text-gray-500 mt-1">Separa las etiquetas por comas.</p>
                         </div>
 
-                        {/* Imagen */}
+                        <div>
+                            <label htmlFor="deadline" className="block text-md font-semibold mb-2 flex items-center gap-2"><Clock size={18}/>Fecha y hora de cierre (Opcional)</label>
+                            <input 
+                                type="datetime-local" 
+                                id="deadline" 
+                                value={deadline} 
+                                onChange={(e) => setDeadline(e.target.value)}
+                                min={new Date().toISOString().slice(0, 16)}
+                                className="w-full p-3 rounded-lg bg-light-bg dark:bg-dark-bg border-2 border-transparent focus:border-primary focus:outline-none"
+                            />
+                            <p className="text-xs text-gray-500 mt-1">Después de esta fecha, nadie podrá votar.</p>
+                        </div>
+
                         <div>
                             <label className="block text-md font-semibold mb-2 flex items-center gap-2"><ImageIcon size={18}/>Imagen de Portada</label>
-                            {imagePreview ? (
-                                <div className="relative group w-full h-48">
-                                    <img src={imagePreview} alt="Previsualización" className="w-full h-full object-cover rounded-lg" />
-                                    <button type="button" onClick={removeImage} className="absolute top-2 right-2 bg-black/60 text-white rounded-full p-1.5 opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Eliminar imagen"><X size={20} /></button>
-                                </div>
-                            ) : (
-                                <label htmlFor="image-upload" className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg cursor-pointer hover:bg-light-bg dark:hover:bg-dark-bg">
-                                    <UploadCloud size={32} className="text-gray-500 dark:text-gray-400 mb-2" />
-                                    <p className="text-sm text-gray-500 dark:text-gray-400">Click para subir una imagen</p>
-                                </label>
-                            )}
+                            {imagePreview ? ( <div className="relative group w-full h-48"> <img src={imagePreview} alt="Previsualización" className="w-full h-full object-cover rounded-lg" /> <button type="button" onClick={removeImage} className="absolute top-2 right-2 bg-black/60 text-white rounded-full p-1.5 opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Eliminar imagen"><X size={20} /></button> </div> ) : ( <label htmlFor="image-upload" className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg cursor-pointer hover:bg-light-bg dark:hover:bg-dark-bg"> <UploadCloud size={32} className="text-gray-500 dark:text-gray-400 mb-2" /> <p className="text-sm text-gray-500 dark:text-gray-400">Click para subir una imagen</p> </label> )}
                             <input id="image-upload" ref={imageInputRef} type="file" onChange={handleImageChange} className="hidden" accept="image/png, image/jpeg, image/gif" />
                         </div>
 
-                        {/* Toggles */}
                         <div className="space-y-4">
                              <div className="flex items-center justify-between">
                                 <label htmlFor="isQuiz" className="font-semibold">Modo Quiz</label>
